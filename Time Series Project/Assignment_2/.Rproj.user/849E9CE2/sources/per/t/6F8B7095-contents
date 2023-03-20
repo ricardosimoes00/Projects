@@ -1,0 +1,223 @@
+library(readxl)
+library(xts)
+library(ggplot2)
+library(imputeTS)
+library(dplyr)
+library(xts)
+library(forecast)
+library(fGarch)
+library(rugarch)
+
+#Extract the data
+nasdaq_data <- utils::read.csv("2016-20-Nasdaq.txt")
+
+#0 missing values
+sum(is.na(nasdaq_data))
+
+#Closing Values and Adjusted Closing Values are the same
+all(nasdaq_data[,5] == nasdaq_data[,6])
+
+#Extract closing values
+closed_values <- nasdaq_data[,5]
+
+#Function to compute log-returns
+convert_log_returns <- function(data){
+  returns <- c()
+  for(i in 1:(length(data)-1)){
+    returns <- append(returns, log(data[i+1]/data[i]))
+  }
+  return(returns)
+}
+
+#Apply function to our data
+log_returns <- convert_log_returns(closed_values)
+
+#Create time series index data
+returns_time_index <- as.Date(nasdaq_data[-1,1], format="%Y-%m-%d")
+
+#Remove last 2 observations to test best model
+train_log_returns <- log_returns[-c(1256:1257)]
+test_log_returns <- log_returns[1256:1257]
+
+##We only have observations on work days (excluding weekends and holidays)
+
+#Creating the Time series
+ts_returns <- xts(x = train_log_returns, order.by = returns_time_index[-c(1256:1257)])
+
+#Plot the Time Series
+plot(ts_returns, main = "Log Returns of NASDAQ Closing Values Time Series")
+
+#ACF of absolute values
+acf(ts_returns, lag.max = 40, main = "ACF of Time Series")
+
+#ACF of absolute values
+acf(abs(ts_returns), lag.max = 30, main = "ACF of Absolute Value of Time Series")
+
+
+#Function to do a grid search and find best model. The inputs max_p, max_q, min_p, min_q are the domain of search.
+find_best_model <- function(series, model, submodel, dist, max_p, max_q, min_p, min_q){
+  results <- data.frame()
+  count <- 1
+  for(i in min_p:max_p){
+    for(j in min_q:max_q){
+      if(i==0 & j==0){next}
+      results[count, 1]<- paste0(paste0(paste0("model_", toString(i)), "_"), toString(j))
+      
+      spec <- ugarchspec(variance.model = list(model = model, garchOrder = c(i,j), submodel = submodel), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = dist)
+      criteria <- infocriteria(ugarchfit(spec, series, solver = "hybrid"))
+      
+      results[count, 2] <- criteria[1]
+      results[count ,3] <- criteria[2]
+      
+      count = count + 1
+    }
+    
+  }
+  print(paste0(paste0(paste0("Best Model based on AIC is ", toString(results[which(results[,2] == min(as.numeric(results[,2]))),1])), " with a value of "), min(as.numeric(results[,2]))))
+  print(paste0(paste0(paste0("Best Model based on BIC is ", toString(results[which(results[,3] == min(as.numeric(results[,3]))),1])), " with a value of "), min(as.numeric(results[,3]))))
+  
+  colnames(results) <- c("GARCH Model","AIC","BIC")
+  return(results)
+}
+
+#GARCH
+garches <- find_best_model(ts_returns, "fGARCH", "GARCH", "norm", 5, 5, 0, 0)
+#Best Model based on AIC is model_2_1 with a value of -6.34127037872801
+#Best Model based on BIC is model_2_1 with a value of -6.32081264625166
+
+#GARCH with t-student distribution of innovations
+garches_std <- find_best_model(ts_returns, "fGARCH", "GARCH", "std", 5, 5, 0, 0)
+#Best Model based on AIC is model_2_1 with a value of -6.4436624969608
+#Best Model based on BIC is model_2_1 with a value of -6.41911321798917
+
+#APARCH
+aparches <- find_best_model(ts_returns, "apARCH", NULL, "norm", 5, 5, 1, 1)
+#Best Model based on AIC is model_1_1 with a value of -6.32875995233473
+#Best Model based on BIC is model_1_1 with a value of -6.3042106733631
+
+#FIGARCH
+figarches <- find_best_model(ts_returns, "fiGARCH", NULL, "norm", 5, 5, 1, 1)
+#Best Model based on AIC is model_4_1 with a value of -6.33795478956277
+#Best Model based on BIC is model_1_1 with a value of -6.3108154941567
+
+#IGARCH
+igarches <- find_best_model(ts_returns, "iGARCH", NULL, "norm", 5, 5, 1, 1)
+#Best Model based on AIC is model_4_2 with a value of -6.32457242561885
+#Best Model based on BIC is model_1_1 with a value of -6.31115026602007
+
+
+#Garch-M needs a different function since it requires a different type of input
+
+#Function to perform Grid Search on the GARCH-M
+find_best_GARCH_M <- function(series, max_p, max_q){
+  results <- matrix(nrow = max_q*max_p, ncol = 3)
+  colnames(results) <- c("GARCH Model","AIC","BIC")
+  count <- 1
+  for(i in 1:max_p){
+    for(j in 1:max_q){
+      results[count, 1]<- paste0(paste0(paste0("model_", toString(i)), "_"), toString(j))
+      
+      spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(i,j)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE, archm = TRUE, archpow = 2), distribution.model = "norm")
+      criteria <- infocriteria( ugarchfit(spec, series, solver = "hybrid"))
+      
+      results[count, 2] <- as.numeric(criteria[1])
+      results[count ,3] <- as.numeric(criteria[2])
+      
+      count = count + 1
+    }
+    
+  }
+  print(paste0(paste0(paste0("Best Model based on AIC is ", toString(results[which(results[,2] == min(as.numeric(results[,2]))),1])), " with a value of "), min(as.numeric(results[,2]))))
+  print(paste0(paste0(paste0("Best Model based on BIC is ", toString(results[which(results[,3] == min(as.numeric(results[,3]))),1])), " with a value of "), min(as.numeric(results[,3]))))
+  
+  return(results)
+}
+
+#GARCH-M
+garchm <- find_best_GARCH_M(ts_returns, 5, 5) 
+#Best Model based on AIC is model_4_2 with a value of -6.32714109029508
+#Best Model based on BIC is model_1_1 with a value of -6.30599013421605
+
+
+#Models
+garch_model <- ugarchfit(ugarchspec(variance.model = list(model = "fGARCH", garchOrder = c(2,1), submodel = "GARCH"), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+garch_model_2 <- ugarchfit(ugarchspec(variance.model = list(model = "fGARCH", garchOrder = c(2,1), submodel = "GARCH"), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "std"), ts_returns, solver = "hybrid")
+
+aparch_model <- ugarchfit(ugarchspec(variance.model = list(model = "apARCH", garchOrder = c(1,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+
+figarch_model <- ugarchfit(ugarchspec(variance.model = list(model = "fiGARCH", garchOrder = c(4,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+figarch_model_2 <- ugarchfit(ugarchspec(variance.model = list(model = "fiGARCH", garchOrder = c(1,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+
+igarch_model <- ugarchfit(ugarchspec(variance.model = list(model = "iGARCH", garchOrder = c(4,2)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+igarch_model_2 <- ugarchfit(ugarchspec(variance.model = list(model = "iGARCH", garchOrder = c(1,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE), distribution.model = "norm"), ts_returns, solver = "hybrid")
+
+garch_m_model <- ugarchfit(ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(4,2)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE, archm = TRUE, archpow = 2), distribution.model = "norm"), ts_returns, solver = "hybrid")
+garch_m_model_2 <- ugarchfit(ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1,1)), mean.model = list(armaOrder = c(0,0), include.mean = TRUE, archm = TRUE, archpow = 2), distribution.model = "norm"), ts_returns, solver = "hybrid")
+
+
+#Select best model based on forecasts
+
+garch_forecast <- ugarchforecast(garch_model, n.ahead = 2)
+garch_forecast_2 <- ugarchforecast(garch_model_2, n.ahead = 2)
+aparch_forecast <- ugarchforecast(aparch_model, n.ahead = 2)
+figarch_forecast <- ugarchforecast(figarch_model, n.ahead = 2)
+figarch_forecast_2 <- ugarchforecast(figarch_model_2, n.ahead = 2)
+igarch_forecast <- ugarchforecast(igarch_model, n.ahead = 2)
+igarch_forecast_2 <- ugarchforecast(igarch_model_2, n.ahead = 2)
+garch_m_forecast <- ugarchforecast(garch_m_model, n.ahead = 2)
+garch_m_forecast_2 <- ugarchforecast(garch_m_model_2, n.ahead = 2)
+
+
+#RSME and MAPE functions
+rmse <- function(pred, true){
+  som <- 0 
+  n <- length(true)
+  for( i in length(n)){
+    som <- som + (pred[i] - true[i])^2
+  }
+  return(sqrt(som/n))
+}
+
+mape <- function(pred, true){
+  som <- 0 
+  n <- length(true)
+  for( i in length(n)){
+    som <- som + abs(pred[i] - true[i])/abs(true[i])
+  }
+  return(som/n)
+}
+
+
+rmse(as.numeric(garch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.003177299  #Best Model
+mape(as.numeric(garch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.5879182
+
+rmse(as.numeric(garch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.003570845
+mape(as.numeric(garch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.6607388
+
+rmse(as.numeric(aparch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.00320876
+mape(as.numeric(aparch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.5937397
+
+rmse(as.numeric(figarch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.003479059
+mape(as.numeric(figarch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.6437549
+
+rmse(as.numeric(figarch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.003474733
+mape(as.numeric(figarch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.6429544
+
+rmse(as.numeric(igarch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.003372249
+mape(as.numeric(igarch_forecast@forecast$seriesFor[,1]), test_log_returns) #0.6239911
+
+rmse(as.numeric(igarch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.003421449
+mape(as.numeric(igarch_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.6330951
+
+rmse(as.numeric(garch_m_forecast@forecast$seriesFor[,1]), test_log_returns) #0.003281516
+mape(as.numeric(garch_m_forecast@forecast$seriesFor[,1]), test_log_returns) #0.6072023
+
+rmse(as.numeric(garch_m_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.003338215
+mape(as.numeric(garch_m_forecast_2@forecast$seriesFor[,1]), test_log_returns) #0.6176936
+
+
+#The selected model is the GARCH(2,1)
+
+garch_model
+
+#Parameters alpha1 = 0.164821 alpha2 = 0.036388 beta1 = 0.619570

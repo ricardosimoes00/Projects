@@ -1,0 +1,718 @@
+library(readxl)
+library(stlplus)
+library(survMisc)
+library(ggplot2)
+library(dplyr)
+library(forecast)
+library(xts)
+library(lmtest)
+
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+time_index <- seq(from = as.POSIXct("2020-01-01 00:00:00"), 
+                  to = as.POSIXct("2020-12-31 23:00:00"), by = "hour")
+
+data <- read_excel("C:/Users/Fernando/Desktop/ST/QualidadeARO3.xlsx")
+Restelo <- data$`Antas-Espinho`
+
+df<-data.frame(Restelo)
+
+
+#Check for Variability, Trend and Seasonality in the TS
+
+Restelo_TS <- ts(Restelo, start=c(1,1), end=c(366,24), frequency=24
+                 )
+
+ggtsdisplay(Restelo_TS)
+
+df<- data.frame(Restelo_TS)
+
+df_hour <- data.frame(id = 1:24)
+auxiliar <- c()
+for (i in 1:(nrow(df))) {
+  auxiliar <- c(auxiliar,df$Restelo_TS[i])
+  if (i%%24 == 0)  {
+    if (i<100){
+      print(auxiliar)
+    }
+    df_hour <- cbind(df_hour, auxiliar)
+    auxiliar <- c()
+  }
+}
+df_hour$id<-NULL
+boxplot(t(df_hour),xlab = "Hours of the day ",ylab = "03 levels")
+
+
+for (i in 1:(ncol(df_hour))) {
+  names(df_hour)[i] <- i
+}
+
+Jan<-c()
+Fev<-c()
+Mar<-c()
+Abr<-c()
+Mai<-c()
+Jun<-c()
+Jul<-c()
+Ago<-c()
+Set<-c()
+Out<-c()
+Nov<-c()
+Dez<-c()
+
+day_means<-c(colMeans(df_hour))
+
+for (i in 1:366){
+  if (i <= 31) {
+    Jan<-c(Jan,day_means[i])
+  }
+  if (31 < i & i <= 60) {
+    Fev<-c(Fev,day_means[i])
+  }
+  if (60 < i & i <= 91) {
+    Mar<-c(Mar,day_means[i])
+  }
+  if (91 < i & i <= 121) {
+    Abr<-c(Abr,day_means[i])
+  }
+  if (121 < i & i <= 152) {
+    Mai<-c(Mai,day_means[i])
+  }
+  if (152 < i & i <= 182) {
+    Jun<-c(Jun,day_means[i])
+  }
+  if (182 < i & i <= 213) {
+    Jul<-c(Jul,day_means[i])
+  }
+  if (213 < i & i <= 244) {
+    Ago<-c(Ago,day_means[i])
+  }
+  if (244 < i & i <= 274) {
+    Set<-c(Set,day_means[i])
+  }
+  if (274 < i & i <= 305) {
+    Out<-c(Out,day_means[i])
+  }
+  if (305 < i & i <= 335) {
+    Nov<-c(Nov,day_means[i])
+  }
+  if (335 < i & i <= 366) {
+    Dez<-c(Dez,day_means[i])
+  }
+}
+
+max_ln<-31
+df_month <-data.frame(col1 = c(Jan,rep(NA, max_ln - length(Jan))),
+                      col2 = c(Fev,rep(NA, max_ln - length(Fev))),
+                      col3 = c(Mar,rep(NA, max_ln - length(Mar))),
+                      col4 = c(Abr,rep(NA, max_ln - length(Abr))),
+                      col5 = c(Mai,rep(NA, max_ln - length(Mai))),
+                      col6 = c(Jun,rep(NA, max_ln - length(Jun))),
+                      col7 = c(Jul,rep(NA, max_ln - length(Jul))),
+                      col8 = c(Ago,rep(NA, max_ln - length(Ago))),
+                      col9 = c(Set,rep(NA, max_ln - length(Set))),
+                      col10 = c(Out,rep(NA, max_ln - length(Out))),
+                      col11 = c(Nov,rep(NA, max_ln - length(Nov))),
+                      col12 = c(Dez,rep(NA, max_ln - length(Dez)))
+)
+
+months<-c("Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez")
+for (i in (1:ncol(df_month))){
+  names(df_month)[i] <- months[i]
+}
+
+boxplot(df_month)
+boxplot(t(df_month))
+
+rm(Jan,Fev,Mar,Abr,Mai,Jun,Jul,Ago,Set,Out,Nov,Dez,auxiliar,day_means,firstHour,i,max_ln)
+
+##Apply Transformations
+
+#Check if there are 0 values
+min(Restelo_TS)
+#TS has 0 values. Apply box-cox but first remove 0 values
+
+Restelo_TS<-as.data.frame(Restelo_TS)
+
+v<-c()
+for (i in 1:nrow(Restelo_TS)){
+  if (Restelo_TS$x[i] == 0) {
+    v<-c(v,i)
+  }
+}
+v #there are 
+
+Restelo_TS<-ts((Restelo_TS[!(Restelo_TS$x ==0),]),frequency=24)
+ggtsdisplay(Restelo_TS)
+
+BoxCox.lambda(Restelo_TS, method = c("guerrero")) 
+Restelo_TS<-BoxCox(Restelo_TS,0.75)
+
+ggtsdisplay(Restelo_TS)
+
+insertvalue <- function(TS, value, r) {
+  TS<-as.data.frame(TS)
+  upper <- as.data.frame(TS[1:r-1,])
+  lower <- as.data.frame(TS[r:nrow(TS),])
+  upper[nrow(upper) + 1,] = value
+  names(lower)[1] <- "id"
+  names(upper)[1] <- "id"
+  total<-rbind(upper,lower)
+  return(total)
+}
+
+for (i in 1:length(v)){
+  print(v[i])
+  Restelo_TS<-insertvalue(Restelo_TS,0,v[i])
+} 
+
+Restelo_boxcox<-Restelo_TS
+
+Restelo_TS <- ts(Restelo_TS, frequency = 24)
+ggtsdisplay(Restelo_TS)
+
+sdif_Restelo_TS<-diff(Restelo_TS,lag = 24, differences = 1)
+ggtsdisplay(sdif_Restelo_TS)
+
+BoxCox.lambda(sdif_Restelo_TS, method = "loglik")
+
+tdif_Restelo_TS<-diff(diff(Restelo_TS))
+ggtsdisplay(tdif_Restelo_TS)
+
+stdif_Restelo_TS<-diff(diff(Restelo_TS,lag = 24, differences = 2))
+ggtsdisplay(stdif_Restelo_TS)
+acf(stdif_Restelo_TS)
+pacf(stdif_Restelo_TS)
+
+autoarima<-auto.arima(
+  ts((Restelo_TS),frequency=24),
+  d = 0,
+  D = 1,
+  max.p = 2,
+  max.q = 2,
+  max.P = 2,
+  max.Q = 2,
+  seasonal=TRUE,
+  allowdrift = FALSE,
+  ic = c("aicc", "aic", "bic"),
+  #stepwise = TRUE,
+  trace = TRUE,
+  #approximation = TRUE,
+  #truncate = 20,
+  #test = c("kpss", "adf", "pp"),
+)
+summary(autoarima)
+autoarima
+
+#Restelo (1,0,1)(0,1,1)
+
+m1<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+m2<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+m3<-Arima(Restelo_TS,
+            order=c(2,0,2),
+            seasonal=c(0,1,2),
+            lambda=NULL)
+
+m4<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+m5<-Arima(Restelo_TS, #NAO
+          order=c(2,0,2),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+m6<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+m7<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+m8<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+m9<-Arima(Restelo_TS,
+          order=c(2,0,2),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(m1$residuals)
+ggtsdisplay(m2$residuals)
+ggtsdisplay(m3$residuals)
+ggtsdisplay(m4$residuals)
+ggtsdisplay(m5$residuals)
+ggtsdisplay(m6$residuals)
+ggtsdisplay(m7$residuals)
+ggtsdisplay(m8$residuals)
+ggtsdisplay(m9$residuals)
+########################
+
+n1<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+n2<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+n3<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+n4<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+n5<-Arima(Restelo_TS, #NAO
+          order=c(1,0,1),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+n6<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+n7<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+n8<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+n9<-Arima(Restelo_TS,
+          order=c(1,0,1),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(n1$residuals)
+ggtsdisplay(n2$residuals)
+ggtsdisplay(n3$residuals)
+ggtsdisplay(n4$residuals)
+ggtsdisplay(n5$residuals)
+ggtsdisplay(n6$residuals)
+ggtsdisplay(n7$residuals)
+ggtsdisplay(n8$residuals)
+ggtsdisplay(n9$residuals)
+
+
+########################
+
+o1<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+o2<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+o3<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+o4<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+o5<-Arima(Restelo_TS, #NAO
+          order=c(1,0,0),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+o6<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+o7<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+o8<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+o9<-Arima(Restelo_TS,
+          order=c(1,0,0),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(o1$residuals)
+ggtsdisplay(o2$residuals)
+ggtsdisplay(o3$residuals)
+ggtsdisplay(o4$residuals)
+ggtsdisplay(o5$residuals)
+ggtsdisplay(o6$residuals)
+ggtsdisplay(o7$residuals)
+ggtsdisplay(o8$residuals)
+ggtsdisplay(o9$residuals)
+########################
+
+p1<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+p2<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+p3<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+p4<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+p5<-Arima(Restelo_TS, #NAO
+          order=c(0,0,1),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+p6<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+p7<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+p8<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+p9<-Arima(Restelo_TS,
+          order=c(0,0,1),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(p1$residuals)
+ggtsdisplay(p2$residuals)
+ggtsdisplay(p3$residuals)
+ggtsdisplay(p4$residuals)
+ggtsdisplay(p5$residuals)
+ggtsdisplay(p6$residuals)
+ggtsdisplay(p7$residuals)
+ggtsdisplay(p8$residuals)
+ggtsdisplay(p9$residuals)
+
+########################
+
+q1<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+q2<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+q3<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+q4<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+q5<-Arima(Restelo_TS, #NAO
+          order=c(0,0,2),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+q6<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+q7<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+q8<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+q9<-Arima(Restelo_TS,
+          order=c(0,0,2),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(q1$residuals)
+ggtsdisplay(q2$residuals)
+ggtsdisplay(q3$residuals)
+ggtsdisplay(q4$residuals)
+ggtsdisplay(q5$residuals)
+ggtsdisplay(q6$residuals)
+ggtsdisplay(q7$residuals)
+ggtsdisplay(q8$residuals)
+ggtsdisplay(q9$residuals)
+
+########################
+
+r1<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+r2<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+r3<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+r4<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+r5<-Arima(Restelo_TS, #NAO
+          order=c(1,0,2),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+r6<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+r7<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+r8<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+r9<-Arima(Restelo_TS,
+          order=c(1,0,2),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(r1$residuals)
+ggtsdisplay(r2$residuals)
+ggtsdisplay(r3$residuals)
+ggtsdisplay(r4$residuals)
+ggtsdisplay(r5$residuals)
+ggtsdisplay(r6$residuals)
+ggtsdisplay(r7$residuals)
+ggtsdisplay(r8$residuals)
+ggtsdisplay(r9$residuals)
+
+########################
+
+s1<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+s2<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+s3<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+s4<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+??Arima
+
+s5<-Arima(Restelo_TS, #NAO
+          order=c(2,0,1),
+          seasonal=c(1,1,0),
+          lambda="NULL")
+
+s6<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+s7<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+s8<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+s9<-Arima(Restelo_TS,
+          order=c(2,0,1),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(s1$residuals)
+ggtsdisplay(s2$residuals)
+ggtsdisplay(s3$residuals)
+ggtsdisplay(s4$residuals)
+ggtsdisplay(s5$residuals)
+ggtsdisplay(s6$residuals)
+ggtsdisplay(s7$residuals)
+ggtsdisplay(s8$residuals)
+ggtsdisplay(s9$residuals)
+
+
+########################
+
+t1<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(2,1,2),
+          lambda=NULL)
+
+t2<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(2,1,1),
+          lambda=NULL)
+
+t3<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(0,1,2),
+          lambda=NULL)
+
+t4<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(0,1,1),
+          lambda=NULL)
+
+t5<-Arima(Restelo_TS, #NAO
+          order=c(2,0,0),
+          seasonal=c(1,1,0),
+          lambda=NULL)
+
+t6<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(1,1,1),
+          lambda=NULL)
+
+t7<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(1,1,2),
+          lambda=NULL)
+
+t8<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(2,1,0),
+          lambda=NULL)
+
+t9<-Arima(Restelo_TS,
+          order=c(2,0,0),
+          seasonal=c(0,1,0),
+          lambda=NULL)
+
+ggtsdisplay(t1$residuals)
+ggtsdisplay(t2$residuals)
+ggtsdisplay(t3$residuals)
+ggtsdisplay(t4$residuals)
+ggtsdisplay(t5$residuals)
+ggtsdisplay(t6$residuals)
+ggtsdisplay(t7$residuals)
+ggtsdisplay(t8$residuals)
+ggtsdisplay(t9$residuals)
+
+########################
+
+test1<-Arima(Restelo_TS, order=c(1,0,1), seasonal=c(0,1,1), lambda="auto")
+test2<-Arima(Restelo_TS, order=c(1,0,1), seasonal=c(0,1,2), lambda="auto")
+test3<-Arima(Restelo_TS, order=c(1,0,1), seasonal=c(1,1,1), lambda="auto")
+test4<-Arima(Restelo_TS, order=c(2,0,0), seasonal=c(0,1,1), lambda="auto")
+test5<-Arima(Restelo_TS, order=c(2,0,0), seasonal=c(0,1,2), lambda="auto")
+test6<-Arima(Restelo_TS, order=c(2,0,0), seasonal=c(1,1,1), lambda="auto")
+
+plot_test1<-ggtsdisplay(test1$residuals)
+plot_test2<-ggtsdisplay(test2$residuals)
+plot_test3<-ggtsdisplay(test3$residuals)
+plot_test4<-ggtsdisplay(test4$residuals)
+plot_test5<-ggtsdisplay(test5$residuals)
+plot_test6<-ggtsdisplay(test6$residuals)
+
+res_test1<-checkresiduals(test1)
+res_test2<-checkresiduals(test2)
+res_test3<-checkresiduals(test3)
+res_test4<-checkresiduals(test4)
+res_test5<-checkresiduals(test5)
+res_test6<-checkresiduals(test6)
+
+cbind(test1$aic,test1$bic,mae(test1$fitted,Restelo_TS),rmse(test1$fitted,Restelo_TS))
+cbind(test2$aic,test2$bic,mae(test2$fitted,Restelo_TS),rmse(test2$fitted,Restelo_TS))
+cbind(test3$aic,test3$bic,mae(test3$fitted,Restelo_TS),rmse(test3$fitted,Restelo_TS))
+cbind(test4$aic,test4$bic,mae(test4$fitted,Restelo_TS),rmse(test4$fitted,Restelo_TS))
+cbind(test5$aic,test5$bic,mae(test5$fitted,Restelo_TS),rmse(test5$fitted,Restelo_TS))
+cbind(test6$aic,test6$bic,mae(test6$fitted,Restelo_TS),rmse(test6$fitted,Restelo_TS))
+
+??mae
+
+forecast::accuracy(test1)
+forecast::accuracy(test2)
+forecast::accuracy(test3)
+forecast::accuracy(test4)
+forecast::accuracy(test5)
+forecast::accuracy(test6)
+
+
+
+??ggtsdisplay
+??checkresiduals
+
+coeftest(fit1)
+summary(fit1)
+
+
+autoplot(ts((Restelo_boxcox),frequency=24))+autolayer(fit1$fitted,series="ARIMA")
+
+
+
+
+autoarima$n.cond
+
